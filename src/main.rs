@@ -45,9 +45,26 @@ fn generate(puzzle: &str) -> Result<LpInfo> {
         _ => bail!("Expected 9x9, 6x6, or 4x4 puzzle"),
     };
 
+    // lambda to compute variable index
+    let x = (|row, col, value| row * size * size + col * size + value);
+
     let objective = vec![1; size * size * size];
     let b = vec![];
-    let constraints = vec![vec![]];
+    let mut constraints = vec![vec![]];
+
+    // Each cell x_rc contains one value
+    for row in 0..size {
+        for col in 0..size {
+            let constraint: Vec<(usize, i64)> = (0..size).map(|v| (x(row, col, v), 1)).collect();
+            constraints.push(constraint);
+        }
+    }
+
+    // A value only appears once in each row
+
+    // A value only appears once in each col
+
+    // A value appears only once in each subgrid
 
     Ok(LpInfo {
         objective,
