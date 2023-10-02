@@ -1,6 +1,8 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use std::fmt;
+use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// A simple utility to convert standard-format Sudoku puzzles
@@ -8,22 +10,27 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Parser)]
 #[clap(name = "sudoku2lp", version = "0.1.0", author = "Andrew Henshaw")]
 pub struct AppArgs {
-    file: PathBuf,
+    in_file: PathBuf,
+    out_file: Option<PathBuf>,
 }
 
-#[derive(Debug)]
 struct LpInfo {
     pub objective: Vec<i64>,
-    pub b: Vec<i64>,
+    pub b: Vec<Equality>,
     pub constraints: Vec<Vec<(usize, i64)>>,
 }
 
 fn main() {
     let args = AppArgs::parse();
-    if let Ok(puzzle) = load(&args.file) {
-        println!("{puzzle}");
+
+    // if out_file not provided, use in_file base + ".lp"
+    let mut out_file = args.out_file.unwrap_or(args.in_file.clone());
+    out_file.set_extension("lp");
+
+    if let Ok(puzzle) = load(&args.in_file) {
         if let Ok(lp) = generate(&puzzle) {
-            println!("{lp}");
+            let mut output = File::create(out_file).expect("File I/O");
+            write!(output, "{}", lp).expect("File I/O");
         }
     }
 }
@@ -58,7 +65,7 @@ fn generate(puzzle: &str) -> Result<LpInfo> {
         for col in 0..size {
             let constraint: Vec<(usize, i64)> = (0..size).map(|v| (x(row, col, v), 1)).collect();
             constraints.push(constraint);
-            b.push(1);
+            b.push(Equality::EQ(1));
         }
     }
 
@@ -67,7 +74,7 @@ fn generate(puzzle: &str) -> Result<LpInfo> {
         for v in 0..size {
             let constraint: Vec<(usize, i64)> = (0..size).map(|col| (x(row, col, v), 1)).collect();
             constraints.push(constraint);
-            b.push(1);
+            b.push(Equality::EQ(1));
         }
     }
 
@@ -76,7 +83,7 @@ fn generate(puzzle: &str) -> Result<LpInfo> {
         for v in 0..size {
             let constraint: Vec<(usize, i64)> = (0..size).map(|row| (x(row, col, v), 1)).collect();
             constraints.push(constraint);
-            b.push(1);
+            b.push(Equality::EQ(1));
         }
     }
 
@@ -93,9 +100,27 @@ fn generate(puzzle: &str) -> Result<LpInfo> {
                     constraint.push((x(row, col, v), 1));
                 }
             }
-            b.push(1);
+            constraints.push(constraint);
+            b.push(Equality::EQ(1));
         }
     }
+
+    // The original clues from the puzzle
+    let constraint: Vec<(usize, i64)> = puzzle
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c != '0')
+        .map(|(i, c)| {
+            // We know this unwrap can't fail
+            let val = c.to_digit(10).unwrap() as usize;
+            let row = i / size;
+            let col = i % size;
+            (x(row, col, val - 1), 1)
+        })
+        .collect();
+
+    b.push(Equality::GE(constraint.len() as i64));
+    constraints.push(constraint);
 
     Ok(LpInfo {
         objective,
@@ -106,28 +131,41 @@ fn generate(puzzle: &str) -> Result<LpInfo> {
 
 impl fmt::Display for LpInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        writeln!(f, "Minimize")?;
-        let obj = self
-            .objective
-            .iter()
-            .enumerate()
-            .map(|(i, val)| format!("{val} x{i}"))
-            .collect::<Vec<String>>()
-            .join(" + ");
-        writeln!(f, "{obj}")?;
+        let vars = (0..self.objective.len())
+            .map(|i| format!("x{i}"))
+            .collect::<Vec<String>>();
+
+        writeln!(f, "Minimize\n0")?;
         writeln!(f, "Subject To")?;
         for (constraint, rhs) in self.constraints.iter().zip(&self.b) {
             writeln!(f, "{}", constraint2eqn(constraint, rhs))?;
         }
-        writeln!(f, "")
+        writeln!(f, "Binary")?;
+        writeln!(f, "{}", vars.join(" "))?;
+        writeln!(f, "End")
     }
 }
 
-fn constraint2eqn(constraint: &Vec<(usize, i64)>, rhs: &i64) -> String {
+fn constraint2eqn(constraint: &Vec<(usize, i64)>, rhs: &Equality) -> String {
     let eqn = constraint
         .iter()
         .map(|(index, val)| format!("{val} x{index}"))
         .collect::<Vec<String>>()
         .join(" + ");
-    format!("{eqn} >= {rhs}")
+    format!("{eqn} {rhs}")
+}
+
+enum Equality {
+    EQ(i64),
+    GE(i64),
+}
+
+impl fmt::Display for Equality {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let s = match self {
+            Equality::EQ(value) => format!(" = {value}"),
+            Equality::GE(value) => format!(">= {value}"),
+        };
+        write!(f, "{s}")
+    }
 }
