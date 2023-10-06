@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use clap::Parser;
+use grb::Model;
 use std::fmt;
 use std::fs::File;
 use std::io::Write;
@@ -12,6 +13,8 @@ use std::path::{Path, PathBuf};
 pub struct AppArgs {
     in_file: PathBuf,
     out_file: Option<PathBuf>,
+    #[arg(short, long, help = "Solve puzzle (if solver available)")]
+    solve: bool,
 }
 
 struct LpInfo {
@@ -29,8 +32,16 @@ fn main() {
 
     if let Ok(puzzle) = load(&args.in_file) {
         if let Ok(lp) = generate(&puzzle) {
-            let mut output = File::create(out_file).expect("File I/O");
+            let mut output = File::create(&out_file).expect("File I/O");
             write!(output, "{}", lp).expect("File I/O");
+            if args.solve {
+                let mut model = Model::new("sudoku").unwrap();
+                model.read(&(out_file.display().to_string())).unwrap();
+                model.optimize().unwrap();
+                for x in model.get_vars() {
+                    dbg!(x);
+                }
+            }
         }
     }
 }
